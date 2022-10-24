@@ -15386,6 +15386,8 @@ void TemplateSpecializationTypeLocRule::registerMatcher(
                       "cub::CountingInputIterator",
                       "cub::TransformInputIterator",
                       "cub::ConstantInputIterator",
+                      "cub::ArgIndexInputIterator",
+                      "cub::KeyValuePair",
                       "thrust::system::cuda::experimental::pinned_allocator");
   };
 
