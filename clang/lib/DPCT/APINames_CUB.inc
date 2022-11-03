@@ -239,3 +239,7 @@ ENTRY_MEMBER_FUNCTION(cub::TexRefInputIterator, BindTexture, BindTexture, false,
 ENTRY_MEMBER_FUNCTION(cub::TexRefInputIterator, UnbindTexture, UnbindTexture, false, NO_FLAG, P4, "Comment")
 ENTRY(cub::CountingInputIterator, cub::CountingInputIterator, true, NO_FLAG, P4, "Successful")
 ENTRY(cub::TransformInputIterator, cub::TransformInputIterator, true, NO_FLAG, P4, "Successful")
+ENTRY(cub::Sum, cub::Sum, true, NO_FLAG, P4, "Successful")
+ENTRY(cub::Max, cub::Max, true, NO_FLAG, P4, "Successful")
+ENTRY(cub::Min, cub::Min, true, NO_FLAG, P4, "Successful")
+ENTRY(cub::Equality, cub::Equality, true, NO_FLAG, P4, "Successful")

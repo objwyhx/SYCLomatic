@@ -50,6 +50,11 @@ TYPE_REWRITE_ENTRY("cub::TransformInputIterator",
                        TYPE_FACTORY(STR("oneapi::dpl::transform_iterator"),
                                     TEMPLATE_ARG(2), TEMPLATE_ARG(1))))
 
+TYPE_REWRITE_ENTRY("cub::Sum", TYPE_FACTORY(STR(MapNames::getClNamespace() + "plus"), STR("")))
+TYPE_REWRITE_ENTRY("cub::Max", TYPE_FACTORY(STR(MapNames::getClNamespace() + "maximum"), STR("")))
+TYPE_REWRITE_ENTRY("cub::Min", TYPE_FACTORY(STR(MapNames::getClNamespace() + "minimum"), STR("")))
+TYPE_REWRITE_ENTRY("cub::Equality", TYPE_FACTORY(STR("std::equal_to"), STR("")))
+
 FEATURE_REQUEST_FACTORY(
     HelperFeatureEnum::Memory_usm_host_allocator_alias,
     TYPE_REWRITE_ENTRY("thrust::system::cuda::experimental::pinned_allocator",

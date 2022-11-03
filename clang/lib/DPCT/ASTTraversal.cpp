@@ -2481,7 +2481,7 @@ void TypeInDeclRule::registerMatcher(MatchFinder &MF) {
                   "libraryPropertyType_t", "libraryPropertyType",
                   "cudaDataType_t", "cudaDataType", "cublasComputeType_t",
                   "cublasAtomicsMode_t", "CUmem_advise_enum", "CUmem_advise",
-                  "thrust::tuple_element", "thrust::tuple_size", "cudaPointerAttributes")
+                  "thrust::tuple_element", "thrust::tuple_size", "cudaPointerAttributes", "cub::Sum")
               )))))
           .bind("cudaTypeDef"),
       this);
@@ -15403,8 +15403,6 @@ void TemplateSpecializationTypeLocRule::registerMatcher(
     ast_matchers::MatchFinder &MF) {
   auto TargetTypeName = [&]() {
     return hasAnyName("thrust::not_equal_to", "thrust::constant_iterator",
-                      "cub::CountingInputIterator",
-                      "cub::TransformInputIterator",
                       "thrust::system::cuda::experimental::pinned_allocator");
   };
 

@@ -42,6 +42,86 @@ auto parentStmt = []() {
 };
 } // namespace
 
+REGISTER_RULE(CubDeviceRule, PassKind::PK_Migration)
+REGISTER_RULE(CubFancyIteratorRule, PassKind::PK_Migration)
+
+void CubDeviceRule::registerMatcher(ast_matchers::MatchFinder &MF) {
+  static constexpr StringRef CubDeviceFuncNames[] = {
+      "Sum",           "Min",          "Max",          "Reduce",
+      "ReduceByKey",   "ExclusiveSum", "InclusiveSum", "InclusiveScan",
+      "ExclusiveScan", "Flagged",      "Unique",       "Encode"};
+
+  MF.addMatcher(callExpr(allOf(callee(functionDecl(
+                                   allOf(hasAnyName(CubDeviceFuncNames),
+                                         hasParent(cxxRecordDecl(hasParent(
+                                             namedDecl(hasName("cub")))))))),
+                               parentStmt()))
+                    .bind("FuncCall"),
+                this);
+}
+
+void CubDeviceRule::runRule(
+    const ast_matchers::MatchFinder::MatchResult &Result) {
+  if (const auto *CE = getNodeAsType<CallExpr>(Result, "FuncCall")) {
+    const auto *DC = CE->getDirectCallee();
+    const auto *NNS = DC->getQualifier();
+    std::string FuncName = getNestedNameSpecifierString(NNS);
+    // Check if the RewriteMap has initialized
+    if (!CallExprRewriterFactoryBase::RewriterMap)
+      return;
+
+    auto Itr = CallExprRewriterFactoryBase::RewriterMap->find(FuncName);
+    if (Itr != CallExprRewriterFactoryBase::RewriterMap->end()) {
+      ExprAnalysis EA;
+      EA.analyze(CE);
+      emplaceTransformation(EA.getReplacement());
+      EA.applyAllSubExprRepl();
+      return;
+    }
+  }
+}
+
+void CubFancyIteratorRule::registerMatcher(ast_matchers::MatchFinder &MF) {
+  auto TargetTypeName = [&]() {
+    return hasAnyName("cub::CountingInputIterator",
+                      "cub::TransformInputIterator");
+  };
+
+  MF.addMatcher(
+      typeLoc(loc(qualType(hasDeclaration(namedDecl(TargetTypeName())))))
+          .bind("loc"),
+      this);
+}
+
+void CubFancyIteratorRule::runRule(const ast_matchers::MatchFinder::MatchResult &Result) {
+  if (const auto *TL = getNodeAsType<TypeLoc>(Result, "loc")) {
+    ExprAnalysis EA;
+    EA.analyze(*TL);
+    emplaceTransformation(EA.getReplacement());
+    EA.applyAllSubExprRepl();
+  }
+}
+
+void CubTypeRule::registerMatcher(ast_matchers::MatchFinder &MF) {
+  auto TargetTypeName = [&]() {
+    return hasAnyName("cub::Sum", "cub::Max", "cub::Min", "cub::Equality");
+  };
+
+  MF.addMatcher(
+      typeLoc(loc(qualType(hasDeclaration(namedDecl(TargetTypeName())))))
+          .bind("cudaTypeDef"),
+      this);
+  MF.addMatcher(varDecl(hasType(classTemplateSpecializationDecl(
+                            hasAnyTemplateArgument(refersToType(hasDeclaration(
+                                namedDecl(hasName("use_default"))))))))
+                    .bind("useDefaultVarDeclInTemplateArg"),
+                this);
+}
+
+void CubTypeRule::runRule(const ast_matchers::MatchFinder::MatchResult &Result) {
+
+}
+
 static bool isNullPointerConstant(const clang::Expr *E) {
   assert(E && "Expr can not be nullptr");
   return E->isNullPointerConstant(clang::dpct::DpctGlobalInfo::getContext(),
@@ -66,35 +146,6 @@ static bool isCubDeviceCXXRecordName(StringRef CXXRDName) {
   return CXXRDName == "DeviceSegmentedReduce" || CXXRDName == "DeviceReduce" ||
          CXXRDName == "DeviceScan" || CXXRDName == "DeviceSelect" ||
          CXXRDName == "DeviceRunLengthEncode";
-}
-
-static llvm::Optional<std::string>
-GetFuncNameIfCubDeviceCallExpr(const CallExpr *C) {
-  if (!C)
-    return llvm::None;
-  if (const auto *DC = C->getDirectCallee()) {
-    if (!isCubDeviceFuncName(DC->getName()))
-      return llvm::None;
-
-    if (const auto *CXXRD =
-            llvm::dyn_cast<CXXRecordDecl>(DC->getDeclContext())) {
-      if (!isCubDeviceCXXRecordName(CXXRD->getName()))
-        return llvm::None;
-
-      if (const auto *ND =
-              llvm::dyn_cast<NamespaceDecl>(CXXRD->getDeclContext())) {
-
-        if (ND->getName() == "cub") {
-          return llvm::Twine("cub::")
-              .concat(CXXRD->getName())
-              .concat("::")
-              .concat(DC->getName())
-              .str();
-        }
-      }
-    }
-  }
-  return llvm::None;
 }
 
 static bool isCubDeviceFunctionCallExpr(const CallExpr *C) {
@@ -696,28 +747,10 @@ void CubRule::processCubTypeDef(const TypedefDecl *TD) {
 
 void CubRule::processDeviceLevelFuncCall(const CallExpr *CE,
                                          bool FuncCallUsed) {
-  auto HasFuncName = GetFuncNameIfCubDeviceCallExpr(CE);
-  if (!HasFuncName)
-    return;
   
-  std::string FuncName = HasFuncName.value();
-
-   // Check if the RewriteMap has initialized
-  if (!CallExprRewriterFactoryBase::RewriterMap)
-    return;
-
-  auto Itr = CallExprRewriterFactoryBase::RewriterMap->find(FuncName);
-  if (Itr != CallExprRewriterFactoryBase::RewriterMap->end()) {
-    ExprAnalysis EA;
-    EA.analyze(CE);
-    emplaceTransformation(EA.getReplacement());
-    EA.applyAllSubExprRepl();
-    return;
-  }
-
-  const FunctionDecl *DC = CE->getDirectCallee();
-  FuncName = DC->getNameAsString();
-
+  const auto *DC = CE->getDirectCallee();
+  std::string FuncName = DC->getNameAsString();
+  /// FIXME: Remove this code and use rewriter to check if expr used
   // If some parameter is temporary object, we need to skip
   // ExpreWithCleanups Node to determine whether return value is used
   auto &Context = DpctGlobalInfo::getContext();
@@ -727,6 +760,8 @@ void CubRule::processDeviceLevelFuncCall(const CallExpr *CE,
       FuncCallUsed = OldFuncCallUsed;
     }
   }
+
+  /// FIXME: Remove this code and use rewriter to check redundant call expression
   if (isRedundantCallExpr(CE)) {
     if (FuncCallUsed) {
       emplaceTransformation(new ReplaceStmt(CE, "0"));
@@ -735,6 +770,8 @@ void CubRule::processDeviceLevelFuncCall(const CallExpr *CE,
     }
     return;
   }
+
+
   // generate callexpr replacement
   auto FuncArgs = CE->getArgs();
   std::string Repl, ParamList, OpRepl, InitRepl, QueueRepl, DataType,
@@ -755,6 +792,8 @@ void CubRule::processDeviceLevelFuncCall(const CallExpr *CE,
   } else {
     return;
   }
+
+  /// FIXME: Use rewriter
   if (FuncName == "Reduce") {
     ExprAnalysis InitEA(FuncArgs[8]);
     InitRepl = InitEA.getReplacedString();
@@ -778,6 +817,8 @@ void CubRule::processDeviceLevelFuncCall(const CallExpr *CE,
     InitRepl = "std::numeric_limits<" + DataType + ">::lowest()";
     OpRepl = MapNames::getClNamespace() + "ext::oneapi::maximum<>()";
   }
+
+  /// FIXME: Use rewriter
   if ((FuncName == "Reduce" && FuncArgs[9]->isDefaultArgument()) ||
       (FuncName != "Reduce" && FuncArgs[7]->isDefaultArgument())) {
     int Index = DpctGlobalInfo::getHelperFuncReplInfoIndexThenInc();
@@ -1349,10 +1390,10 @@ void CubRule::runRule(const ast_matchers::MatchFinder::MatchResult &Result) {
   } else if (const DeclStmt *DS = getNodeAsType<DeclStmt>(Result, "DeclStmt")) {
     processCubDeclStmt(DS);
   } else if (const CallExpr *CE = getNodeAsType<CallExpr>(Result, "FuncCall")) {
-    processCubFuncCall(CE);
+    //processCubFuncCall(CE);
   } else if (const CallExpr *CE =
                  getNodeAsType<CallExpr>(Result, "FuncCallUsed")) {
-    processCubFuncCall(CE, true);
+    //processCubFuncCall(CE, true);
   } else if (const TypedefDecl *TD =
                  getNodeAsType<TypedefDecl>(Result, "TypeDefDecl")) {
     processCubTypeDef(TD);

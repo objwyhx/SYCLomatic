@@ -14,6 +14,24 @@
 namespace clang {
 namespace dpct {
 
+class CubDeviceRule : public NamedMigrationRule<CubDeviceRule> {
+public:
+  void registerMatcher(ast_matchers::MatchFinder &MF) override;
+  void runRule(const ast_matchers::MatchFinder::MatchResult &Result);
+};
+
+class CubFancyIteratorRule : public NamedMigrationRule<CubFancyIteratorRule> {
+public:
+  void registerMatcher(ast_matchers::MatchFinder &MF) override;
+  void runRule(const ast_matchers::MatchFinder::MatchResult &Result);
+};
+
+class CubTypeRule : public NamedMigrationRule<CubTypeRule> {
+public:
+  void registerMatcher(ast_matchers::MatchFinder &MF) override;
+  void runRule(const ast_matchers::MatchFinder::MatchResult &Result);
+};
+
 class CubRule : public NamedMigrationRule<CubRule> {
 public:
   void registerMatcher(ast_matchers::MatchFinder &MF) override;
