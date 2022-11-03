@@ -451,6 +451,8 @@ bool isCGAPI(std::string Name) {
 
 void ExprAnalysis::analyzeExpr(const DeclRefExpr *DRE) {
   std::string CTSName;
+  llvm::raw_string_ostream SS(CTSName);
+  DRE->getDecl()->printNestedNameSpecifier(SS, DpctGlobalInfo::getContext().getPrintingPolicy());
   auto Qualifier = DRE->getQualifier();
   if (Qualifier) {
     bool IsNamespaceOrAlias =
@@ -461,8 +463,7 @@ void ExprAnalysis::analyzeExpr(const DeclRefExpr *DRE) {
     bool IsSpecicalAPI = isMathFunction(DRE->getNameInfo().getAsString()) ||
                          isCGAPI(DRE->getNameInfo().getAsString());
     if (!IsNamespaceOrAlias || !IsSpecicalAPI) {
-      CTSName = getNestedNameSpecifierString(Qualifier) +
-                DRE->getNameInfo().getAsString();
+      CTSName += DRE->getNameInfo().getAsString();
     }
   }
 
@@ -471,6 +472,7 @@ void ExprAnalysis::analyzeExpr(const DeclRefExpr *DRE) {
   } else {
     RefString = DRE->getNameInfo().getAsString();
   }
+  
   if (auto TemplateDecl = dyn_cast<NonTypeTemplateParmDecl>(DRE->getDecl()))
     addReplacement(DRE, TemplateDecl->getIndex());
   else if (auto ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl())) {

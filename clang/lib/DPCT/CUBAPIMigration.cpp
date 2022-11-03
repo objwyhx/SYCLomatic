@@ -17,6 +17,7 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/AST/QualTypeNames.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Analysis/AnalysisDeclContext.h"
 #include "clang/Basic/CharInfo.h"
@@ -34,6 +35,9 @@ using namespace dpct;
 using namespace tooling;
 using namespace ast_matchers;
 
+#define OS llvm::errs() << llvm::raw_ostream::RED
+#define ENDL llvm::raw_ostream::RESET << "\n";
+
 namespace {
 auto parentStmt = []() {
   return anyOf(hasParent(compoundStmt()), hasParent(forStmt()),
@@ -42,6 +46,7 @@ auto parentStmt = []() {
 };
 } // namespace
 
+// REGISTER_RULE(CubTypeRule, PassKind::PK_Analysis)
 REGISTER_RULE(CubDeviceRule, PassKind::PK_Migration)
 REGISTER_RULE(CubFancyIteratorRule, PassKind::PK_Migration)
 
@@ -50,22 +55,37 @@ void CubDeviceRule::registerMatcher(ast_matchers::MatchFinder &MF) {
       "Sum",           "Min",          "Max",          "Reduce",
       "ReduceByKey",   "ExclusiveSum", "InclusiveSum", "InclusiveScan",
       "ExclusiveScan", "Flagged",      "Unique",       "Encode"};
+  
+  static constexpr StringRef CubDeviceRecordNames[] = {
+    "DeviceReduce", "DeviceScan", "DeviceSelect", "DeviceRunLengthEncode"
+  };
 
-  MF.addMatcher(callExpr(allOf(callee(functionDecl(
-                                   allOf(hasAnyName(CubDeviceFuncNames),
-                                         hasParent(cxxRecordDecl(hasParent(
-                                             namedDecl(hasName("cub")))))))),
-                               parentStmt()))
-                    .bind("FuncCall"),
-                this);
+  MF.addMatcher(
+      callExpr(
+          allOf(callee(functionDecl(allOf(
+                    hasAnyName(CubDeviceFuncNames),
+                    hasParent(functionTemplateDecl(allOf(
+                        hasAnyName(CubDeviceFuncNames),
+                        hasParent(cxxRecordDecl(allOf(
+                            hasAnyName(CubDeviceRecordNames),
+                            hasParent(namespaceDecl(hasName("cub")))))))))))),
+                anyOf(hasParent(compoundStmt()), hasParent(forStmt()),
+                      hasParent(whileStmt()), hasParent(doStmt()),
+                      hasParent(ifStmt()))))
+
+          .bind("FuncCall"),
+      this);
 }
 
 void CubDeviceRule::runRule(
     const ast_matchers::MatchFinder::MatchResult &Result) {
   if (const auto *CE = getNodeAsType<CallExpr>(Result, "FuncCall")) {
-    const auto *DC = CE->getDirectCallee();
-    const auto *NNS = DC->getQualifier();
-    std::string FuncName = getNestedNameSpecifierString(NNS);
+    const auto *Fn = CE->getDirectCallee();
+    std::string FuncName;
+    llvm::raw_string_ostream SS(FuncName);
+    Fn->printNestedNameSpecifier(SS, DpctGlobalInfo::getContext().getPrintingPolicy());
+    FuncName += Fn->getNameAsString();
+
     // Check if the RewriteMap has initialized
     if (!CallExprRewriterFactoryBase::RewriterMap)
       return;
@@ -84,7 +104,7 @@ void CubDeviceRule::runRule(
 void CubFancyIteratorRule::registerMatcher(ast_matchers::MatchFinder &MF) {
   auto TargetTypeName = [&]() {
     return hasAnyName("cub::CountingInputIterator",
-                      "cub::TransformInputIterator");
+                      "cub::TransformInputIterator", "cub::Sum");
   };
 
   MF.addMatcher(
@@ -119,7 +139,7 @@ void CubTypeRule::registerMatcher(ast_matchers::MatchFinder &MF) {
 }
 
 void CubTypeRule::runRule(const ast_matchers::MatchFinder::MatchResult &Result) {
-
+  std::abort();
 }
 
 static bool isNullPointerConstant(const clang::Expr *E) {
