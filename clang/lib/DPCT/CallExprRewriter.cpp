@@ -2604,6 +2604,17 @@ public:
   }
 };
 
+class CheckArgIsDPCPPNativeBinOp {
+  unsigned Count;
+
+public:
+  CheckArgIsDPCPPNativeBinOp(unsigned I) : Count(I) {}
+
+  bool operator()(const CallExpr *C) {
+    return CubRule::isDPCXXNativeBinaryOperator(C->getArg(Count));
+  }
+};
+
 class CheckBaseType {
   std::string TypeName;
 

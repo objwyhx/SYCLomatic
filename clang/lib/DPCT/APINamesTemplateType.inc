@@ -43,6 +43,19 @@ TYPE_REWRITE_ENTRY(
     HEADER_INSERTION_FACTORY(HeaderType::HT_DPL_Iterator,
                              TYPE_FACTORY(STR("oneapi::dpl::counting_iterator"),
                                           TEMPLATE_ARG(0))))
+TYPE_REWRITE_ENTRY("cub::Sum",
+                   TYPE_FACTORY(STR(MapNames::getClNamespace() + "plus"),
+                                STR("")))
+
+TYPE_REWRITE_ENTRY("cub::Min",
+                   TYPE_FACTORY(STR(MapNames::getClNamespace() + "minimum"),
+                                STR("")))
+
+TYPE_REWRITE_ENTRY("cub::Max",
+                   TYPE_FACTORY(STR(MapNames::getClNamespace() + "maximum"),
+                                STR("")))
+
+TYPE_REWRITE_ENTRY("cub::Equality", TYPE_FACTORY(STR("std::equal_to"), STR("")))
 
 TYPE_REWRITE_ENTRY("cub::TransformInputIterator",
                    HEADER_INSERTION_FACTORY(

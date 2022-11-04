@@ -1017,9 +1017,19 @@ void ExprAnalysis::analyzeType(TypeLoc TL, const Expr *CSCE) {
         TYPELOC_CAST(TypedefTypeLoc).getTypedefNameDecl()->getName().str();
     break;
   case TypeLoc::Builtin:
-  case TypeLoc::Record:
-    TyName += DpctGlobalInfo::getTypeName(TL.getType());
+  case TypeLoc::Record: {
+    if (!TypeLocRewriterFactoryBase::TypeLocRewriterMap)
+      return;
+    TyName = DpctGlobalInfo::getTypeName(TL.getType());
+    auto Itr = TypeLocRewriterFactoryBase::TypeLocRewriterMap->find(TyName);
+    if (Itr != TypeLocRewriterFactoryBase::TypeLocRewriterMap->end()) {
+      auto Rewriter = Itr->second->create(TL);
+      auto Result = Rewriter->rewrite();
+      addReplacement(SM.getExpansionLoc(SR.getBegin()),
+                       SM.getExpansionLoc(SR.getEnd()), CSCE, Result.value());
+    }
     break;
+  }
   case TypeLoc::TemplateTypeParm:
     if (auto D = TYPELOC_CAST(TemplateTypeParmTypeLoc).getDecl()) {
       return addReplacement(TL.getBeginLoc(), TL.getEndLoc(), CSCE,

@@ -14,6 +14,18 @@
 namespace clang {
 namespace dpct {
 
+class CubTypeRule : public NamedMigrationRule<CubTypeRule> {
+public:
+  void registerMatcher(ast_matchers::MatchFinder &MF) override;
+  void runRule(const ast_matchers::MatchFinder::MatchResult &Result);
+};
+
+class CubDeviceRule : public NamedMigrationRule<CubDeviceRule> {
+public:
+  void registerMatcher(ast_matchers::MatchFinder &MF) override;
+  void runRule(const ast_matchers::MatchFinder::MatchResult &Result);
+};
+
 class CubRule : public NamedMigrationRule<CubRule> {
 public:
   void registerMatcher(ast_matchers::MatchFinder &MF) override;
@@ -36,14 +48,14 @@ private:
     };
   };
   static int PlaceholderIndex;
-  std::string getOpRepl(const Expr *Operator);
+  static std::string getOpRepl(const Expr *Operator);
   void processCubDeclStmt(const DeclStmt *DS);
   void processCubTypeDef(const TypedefDecl *TD);
   void processCubFuncCall(const CallExpr *CE, bool FuncCallUsed = false);
   void processCubMemberCall(const CXXMemberCallExpr *MC);
   void processTypeLoc(const TypeLoc *TL);
 
-  void processDeviceLevelFuncCall(const CallExpr *CE, bool FuncCallUsed);
+  // void processDeviceLevelFuncCall(const CallExpr *CE, bool FuncCallUsed);
   void processThreadLevelFuncCall(const CallExpr *CE, bool FuncCallUsed);
   void processWarpLevelFuncCall(const CallExpr *CE, bool FuncCallUsed);
   void processBlockLevelMemberCall(const CXXMemberCallExpr *MC);
@@ -93,6 +105,11 @@ public:
   /// (2) No modified reference in loop_j or deeper loop.
   /// The redundant callexpr can be remove safely.
   static void removeRedundantTempVar(const CallExpr *CE);
+
+  /// The function dpct::segmented_reduce only supports DPC++ native binary
+  /// operation. Replace \"dpct_placeholder\" with a DPC++ native binary
+  /// operation.
+  static bool isDPCXXNativeBinaryOperator(const Expr *Op);
 };
 
 } // namespace dpct
