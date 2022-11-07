@@ -678,13 +678,7 @@ template <typename... _Args> constexpr auto __joint_reduce(_Args... __args) {
 /// that implements the binary operation used to perform the scan. \param init
 /// initial value of the reduction for each segment.
 template <int GROUP_SIZE, typename T, typename Ptr, typename BinaryOperation>
-std::enable_if_t<
-    (std::is_pointer<Ptr>::value &&
-     std::is_arithmetic_or_complex<
-         typename std::remove_pointer<Ptr>::type>::value &&
-     std::is_plus_if_complex<typename std::remove_pointer<Ptr>::type,
-                             BinaryOperation>::value)>
-segmented_reduce(sycl::queue queue, T *inputs, T *outputs, size_t segment_count,
+void segmented_reduce(sycl::queue queue, T *inputs, T *outputs, size_t segment_count,
                  Ptr begin_offsets, Ptr end_offsets, BinaryOperation binary_op,
                  T init) {
 
