@@ -1,6 +1,8 @@
 set(LLVM_LINK_COMPONENTS
   Option
   Support
+  NVPTX
+  X86
   )
 
 set(CONT_FILES

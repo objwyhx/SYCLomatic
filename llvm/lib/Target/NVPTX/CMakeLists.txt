@@ -50,6 +50,7 @@ add_llvm_target(NVPTXCodeGen
   MC
   NVPTXDesc
   NVPTXInfo
+  NVPTXAsmParser
   Scalar
   SelectionDAG
   Support
@@ -66,3 +67,4 @@ add_llvm_target(NVPTXCodeGen
 
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)
+add_subdirectory(AsmParser)

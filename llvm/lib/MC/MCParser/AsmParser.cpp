@@ -1795,6 +1795,7 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
   }
   // Statements always start with an identifier.
   AsmToken ID = getTok();
+  ID.dump(errs());
   SMLoc IDLoc = ID.getLoc();
   StringRef IDVal;
   int64_t LocalLabelVal = -1;

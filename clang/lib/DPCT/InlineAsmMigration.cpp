@@ -9,9 +9,60 @@
 #include "InlineAsmMigration.h"
 #include "AnalysisInfo.h"
 #include "CallExprRewriter.h"
-#include "InlineAsmParser.h"
+// #include "InlineAsmParser.h"
 #include "MigrationRuleManager.h"
+// #include "llvm/MC/MCContext.h"
+// #include "llvm/MC/MCParser/MCAsmParser.h"
+// #include "llvm/MC/TargetRegistry.h"
+// #include "llvm/MC/MCRegisterInfo.h"
+// #include "llvm/MC/MCAsmInfo.h"
+// #include "llvm/MC/MCSubtargetInfo.h"
+// #include "llvm/MC/MCSubtargetInfo.h"
+// #include "llvm/Support/TargetSelect.h"
+#include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticOptions.h"
+#include "clang/Driver/DriverDiagnostic.h"
+#include "clang/Driver/Options.h"
+#include "clang/Frontend/FrontendDiagnostic.h"
+#include "clang/Frontend/TextDiagnosticPrinter.h"
+#include "clang/Frontend/Utils.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/Triple.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/MC/MCAsmBackend.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCCodeEmitter.h"
+#include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCObjectFileInfo.h"
+#include "llvm/MC/MCObjectWriter.h"
+#include "llvm/MC/MCParser/MCAsmParser.h"
+#include "llvm/MC/MCParser/MCTargetAsmParser.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCSectionMachO.h"
+#include "llvm/MC/MCStreamer.h"
+#include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/MCTargetOptions.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Option/Arg.h"
+#include "llvm/Option/ArgList.h"
+#include "llvm/Option/OptTable.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormattedStream.h"
+#include "llvm/Support/Host.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
+#include "llvm/Support/Signals.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/Timer.h"
+#include "llvm/Support/raw_ostream.h"
 
+using namespace llvm;
 using namespace clang;
 using namespace clang::dpct;
 
@@ -33,13 +84,57 @@ void actionOnGCCAsmStmt(const GCCAsmStmt *Asm) {
       llvm::errs() << llvm::raw_ostream::BLUE << " O " << P.getOperandNo() << " " << (P.getModifier() != 0 ? P.getModifier() : '0') << llvm::raw_ostream::RESET << "\n";;
   }
 
-  AsmToken Tok;
-  AsmLexer Lexer(S);
-  do {
-    Tok = Lexer.Lex();
-    Tok.dump(llvm::errs());
-    llvm::errs() << "\n";
-  } while (Tok.isNot(AsmToken::Eof));
+  // AsmToken Tok;
+  // AsmLexer Lexer(S);
+  // do {
+  //   Tok = Lexer.Lex();
+  //   Tok.dump(llvm::errs());
+  //   llvm::errs() << "\n";
+  // } while (Tok.isNot(AsmToken::Eof));
+
+  llvm::InitializeAllTargetInfos();
+  llvm::InitializeAllTargetMCs();
+  llvm::InitializeAllAsmParsers();
+
+  std::string Error;
+  SourceMgr SrcMgr;
+  MCTargetOptions MCOptions;
+  SrcMgr.AddNewSourceBuffer(MemoryBuffer::getMemBuffer(S), SMLoc());
+  const static std::string Triple = "nvptx64-nvidia-cuda";
+  const Target *TheTarget = TargetRegistry::lookupTarget(Triple, Error);
+
+  std::unique_ptr<MCRegisterInfo> MRI(TheTarget->createMCRegInfo(Triple));
+  std::unique_ptr<MCAsmInfo> MAI(TheTarget->createMCAsmInfo(*MRI, Triple, MCOptions));
+
+  std::string Out;
+  raw_pwrite_stream *OS = &llvm::errs();
+  std::unique_ptr<formatted_raw_ostream> FOut = std::make_unique<formatted_raw_ostream>(*OS);
+  std::unique_ptr<MCSubtargetInfo> STI(TheTarget->createMCSubtargetInfo(Triple, "", ""));
+  MCContext Ctx(llvm::Triple(Triple), MAI.get(), MRI.get(), STI.get(), &SrcMgr, &MCOptions);
+  std::unique_ptr<MCInstrInfo> MCII(TheTarget->createMCInstrInfo());
+  std::unique_ptr<MCStreamer> Str;
+  MCInstPrinter *IP = TheTarget->createMCInstPrinter(
+        llvm::Triple(Triple), false, *MAI, *MCII, *MRI);
+  std::unique_ptr<MCObjectFileInfo> MOFI(
+      TheTarget->createMCObjectFileInfo(Ctx, true));
+    std::unique_ptr<MCCodeEmitter> CE(TheTarget->createMCCodeEmitter(*MCII, Ctx));
+
+    std::unique_ptr<MCAsmBackend> MAB(
+        TheTarget->createMCAsmBackend(*STI, *MRI, MCOptions));
+
+    Str.reset(TheTarget->createAsmStreamer(
+        Ctx, std::move(FOut), /*asmverbose*/ true,
+        /*useDwarfDirectory*/ true, IP, std::move(CE), std::move(MAB), false));
+  Ctx.setObjectFileInfo(MOFI.get());
+  Str.get()->initSections(true, *STI);
+  std::unique_ptr<MCAsmParser> Parser(
+      createMCAsmParser(SrcMgr, Ctx, *Str.get(), *MAI));
+  std::unique_ptr<MCTargetAsmParser> TAP(
+      TheTarget->createMCAsmParser(*STI, *Parser, *MCII, MCOptions));
+  std::cout << TAP.get() << std::endl;
+  Parser->setTargetParser(*TAP.get());
+  //Parser->setShowParsedOperands(true);
+  Parser->Run(false);
 }
 
 void AsmRule::registerMatcher(ast_matchers::MatchFinder &MF) {
