@@ -38,6 +38,8 @@
 
 using namespace llvm;
 
+extern "C" void migrate(unsigned &Opcode, OperandVector &Operands, bool MatchingInlineAsm);
+
 namespace {
 class NVPTXAsmParser : public MCTargetAsmParser {
   ParseInstructionInfo *InstInfo;
@@ -57,11 +59,6 @@ private:
     return static_cast<NVPTXTargetStreamer &>(TS);
   }
 
-  unsigned matchInstructionImpl(const OperandVector &Operands, MCInst &Inst,
-                            uint64_t &ErrorInfo, FeatureBitset &MissingFeatures,
-                            bool MatchingInlineAsm, unsigned VariantID = 0) {
-    return 0;
-  }
 public:
   NVPTXAsmParser(const MCSubtargetInfo &STI, MCAsmParser &Parser, const MCInstrInfo &MII, const MCTargetOptions &Options)
     : MCTargetAsmParser(Options, STI, MII), Parser(Parser) {
@@ -87,6 +84,7 @@ public:
                                        uint64_t &ErrorInfo,
                                        bool MatchingInlineAsm) override {
                                         errs() << raw_ostream::RED << "Handle Inst!" << raw_ostream::RESET << "\n";
+                                        migrate(Opcode, Operands, MatchingInlineAsm);
                                         return true;
                                        }
   void convertToMapAndConstraints(unsigned Kind,
@@ -186,7 +184,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeNVPTXAsmParser() {
 }
 
 NVPTXAsmParser::~NVPTXAsmParser() {}
-
+#include "../NVPTX.h"
 bool NVPTXAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name, SMLoc NameLoc, OperandVector &Operands) {
   SMLoc Start = getLexer().getLoc();
   errs() << raw_ostream::RED << "Hello, I'm NVPTX assembly Parser!" << raw_ostream::RESET << "\n";
@@ -194,7 +192,11 @@ bool NVPTXAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name
   InstInfo = &Info;
   InstInfo->AsmRewrites->emplace_back(AOK_Label, getTok().getLoc(), 17, "LABBBBBBBBBBBBBEL");
   Operands.push_back(std::make_unique<NVPTXOperand>(NVPTXOperand::Token, getTok().getLocRange().Start, getTok().getLocRange().End));
+  for (const auto &Op : Operands) {
+    Op->print(errs());
+    errs() << "\n";
+  }
+  errs() << "\n";
+  NVPTX::CVT_bf16_f32;
   return false;
 }
-
-

@@ -66,6 +66,29 @@ using namespace llvm;
 using namespace clang;
 using namespace clang::dpct;
 
+static const AsmStmt *CurrentStmt;
+static AsmRule *CurrentRule;
+using ReplaceFuncTy = void (AsmRule::*)(TextModification *);
+static ReplaceFuncTy replace_func; 
+
+extern "C" void migrate(unsigned &Opcode, OperandVector &Operands, bool MatchingInlineAsm) {
+  errs() << raw_ostream::MAGENTA << "Callback Success" << raw_ostream::RESET << "\n";
+  for (const auto &Op : Operands) {
+    Op->print(errs());
+    errs() << "\n";
+  }
+
+  // struct TempAsmRule : public AsmRule {
+  //   void operator()() {
+  //     emplaceTransformation(new ReplaceStmt(CurrentStmt, "// This is a NVPTX assembly replacement."));
+  //   }
+  // };
+  
+  // TempAsmRule Temp;
+  // Temp();
+
+  (CurrentRule->*replace_func)(new ReplaceStmt(CurrentStmt, "// This is a NVPTX assembly replacement."));
+}
 
 void actionOnGCCAsmStmt(const GCCAsmStmt *Asm) {
   const auto &C = DpctGlobalInfo::getContext();
@@ -239,6 +262,9 @@ std::string getAsmLop3Expr(const llvm::SmallVector<std::string, 5> &Operands) {
 
 void AsmRule::runRule(const ast_matchers::MatchFinder::MatchResult &Result) {
   if (auto *AS = getNodeAsType<AsmStmt>(Result, "asm")) {
+    CurrentStmt = AS;
+    replace_func = &AsmRule::emplaceTransformation;
+    CurrentRule = this;
     if (const auto *GCC = dyn_cast<GCCAsmStmt>(AS))
       actionOnGCCAsmStmt(GCC);
     auto AsmString = AS->generateAsmString(*Result.Context);

@@ -49,6 +49,7 @@ ENTRY("cvt.sat.s32.u32", "cvt.sat.s32.u32", false, NO_FLAG, P1, "Comment")
 ENTRY("cvt.sat.s8.s16", "cvt.sat.s8.s16", false, NO_FLAG, P1, "Comment")
 ENTRY("cvt.sat.s8.s32", "cvt.sat.s8.s32", false, NO_FLAG, P1, "Comment")
 ENTRY("cvt.sat.s8.u16", "cvt.sat.s8.u16", false, NO_FLAG, P1, "Comment")
+// rni(sat(cvt(x, y)));
 ENTRY("cvt.sat.s8.u32", "cvt.sat.s8.u32", false, NO_FLAG, P1, "Comment")
 ENTRY("cvt.sat.s8.u8", "cvt.sat.s8.u8", false, NO_FLAG, P1, "Comment")
 ENTRY("cvt.sat.u16.s16", "cvt.sat.u16.s16", false, NO_FLAG, P1, "Comment")
