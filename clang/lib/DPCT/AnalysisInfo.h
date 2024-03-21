@@ -1602,6 +1602,22 @@ public:
   CtTypeInfo();
   CtTypeInfo(const TypeLoc &TL, bool NeedSizeFold = false);
   CtTypeInfo(const VarDecl *D, bool NeedSizeFold = false);
+  CtTypeInfo(StringRef BaseName, StringRef BaseWithoutQual,
+             ArrayRef<SizeInfo> Rng, ArrayRef<std::string> ArraySizeOriginExprs,
+             std::shared_ptr<TemplateDependentStringInfo> TDSI,
+             const std::set<HelperFeatureEnum> &HelperFeatureSet,
+             unsigned PtrLv, bool isRef, bool isTempl,
+             bool TemplateDependentMacro, bool IsArray, bool ContainSizeofType,
+             bool isConstantQualified, bool isCubTemp)
+      : BaseName(BaseName.str()),
+        BaseNameWithoutQualifiers(BaseWithoutQual.str()), Range(Rng.vec()),
+        ArraySizeOriginExprs(ArraySizeOriginExprs.vec()), TDSI(TDSI),
+        HelperFeatureSet(HelperFeatureSet), PointerLevel(PtrLv),
+        IsReference(isRef), IsTemplate(isTempl),
+        TemplateDependentMacro(TemplateDependentMacro), IsArray(IsArray),
+        ContainSizeofType(ContainSizeofType),
+        IsConstantQualified(isConstantQualified),
+        IsCubTempStorageType(isCubTemp) {}
   const std::string &getBaseName() { return BaseName; }
   size_t getDimension() { return Range.size(); }
   std::vector<SizeInfo> &getRange() { return Range; }
@@ -1619,6 +1635,8 @@ public:
   std::shared_ptr<CtTypeInfo>
   applyTemplateArguments(const std::vector<TemplateArgumentInfo> &TA);
   bool isWritten() const {
+    if (IsCubTempStorageType)
+      return false;
     return !TDSI || !isTemplate() || TDSI->isDependOnWritten();
   }
   std::set<HelperFeatureEnum> getHelperFeatureSet() { return HelperFeatureSet; }
@@ -1628,7 +1646,7 @@ public:
   }
   bool containsTemplateDependentMacro() const { return TemplateDependentMacro; }
   bool isConstantQualified() const { return IsConstantQualified; }
-
+  bool isCubTempStorageType() const { return IsCubTempStorageType; }
 private:
   // For ConstantArrayType, size in generated code is folded as an integer.
   // If \p NeedSizeFold is true, original size expression will be appended as
@@ -1674,6 +1692,12 @@ private:
   void removeQualifier() { BaseName = BaseNameWithoutQualifiers; }
 
 private:
+  std::string BaseName;
+  std::string BaseNameWithoutQualifiers;
+  std::vector<SizeInfo> Range;
+  std::vector<std::string> ArraySizeOriginExprs{};
+  std::shared_ptr<TemplateDependentStringInfo> TDSI;
+  std::set<HelperFeatureEnum> HelperFeatureSet;
   unsigned PointerLevel : 16;
   unsigned IsReference : 1;
   unsigned IsTemplate : 1;
@@ -1681,12 +1705,7 @@ private:
   unsigned IsArray : 1;
   unsigned ContainSizeofType : 1;
   unsigned IsConstantQualified : 1;
-  std::string BaseName;
-  std::string BaseNameWithoutQualifiers;
-  std::vector<SizeInfo> Range;
-  std::vector<std::string> ArraySizeOriginExprs{};
-  std::set<HelperFeatureEnum> HelperFeatureSet;
-  std::shared_ptr<TemplateDependentStringInfo> TDSI;
+  unsigned IsCubTempStorageType : 1;
 };
 
 // variable info includes name, type and location.
@@ -1696,6 +1715,10 @@ public:
           const VarDecl *Var, bool NeedFoldSize = false)
       : FilePath(FilePathIn), Offset(Offset), Name(Var->getName()),
         Ty(std::make_shared<CtTypeInfo>(Var, NeedFoldSize)) {}
+  VarInfo(std::shared_ptr<CtTypeInfo> Type, unsigned Offset,
+          const clang::tooling::UnifiedPath &FilePathIn, const VarDecl *Var,
+          bool NeedFoldSize = false)
+      : FilePath(FilePathIn), Offset(Offset), Name(Var->getName()), Ty(Type) {}
   const clang::tooling::UnifiedPath &getFilePath() { return FilePath; }
   unsigned getOffset() { return Offset; }
   const std::string &getName() { return Name; }
@@ -1731,6 +1754,8 @@ public:
 
   MemVarInfo(unsigned Offset, const clang::tooling::UnifiedPath &FilePath,
              const VarDecl *Var);
+  MemVarInfo(std::shared_ptr<CtTypeInfo> Type, unsigned Offset,
+             const clang::tooling::UnifiedPath &FilePath, const VarDecl *Var);
 
   VarAttrKind getAttr() { return Attr; }
   VarScope getScope() { return Scope; }
@@ -1774,8 +1799,21 @@ public:
                                   bool NeedCheckExtraConstQualifier = false);
   void setUseHelperFuncFlag(bool Flag) { UseHelperFuncFlag = Flag; }
   bool isUseHelperFunc() { return UseHelperFuncFlag; }
+  bool isDependOnLocalSize() const {
+    return IsDependOnLocalSize;
+  }
 
+  void setDependOnLocalSize() {
+    IsDependOnLocalSize = true;
+  }
+  const std::string &getCubTempStorageElementType() const {
+    return CubTempStorageElementType;
+  }
+  void setCubTempStorageElementType(const std::string &Ty) {
+    CubTempStorageElementType = Ty;
+  }
 private:
+  void init(const VarDecl *Var);
   bool isTreatPointerAsArray() {
     return getType()->isPointer() && getScope() == Global &&
            DpctGlobalInfo::getUsmLevel() == UsmLevel::UL_None;
@@ -1836,9 +1874,10 @@ private:
   const CXXRecordDecl *DeclOfVarType = nullptr;
   const DeclStmt *DeclStmtOfVarType = nullptr;
   std::string LocalTypeName = "";
-
   static std::unordered_map<const DeclStmt *, int> AnonymousTypeDeclStmtMap;
   bool UseHelperFuncFlag = true;
+  bool IsDependOnLocalSize = false;
+  std::string CubTempStorageElementType;
 };
 
 class TextureTypeInfo {

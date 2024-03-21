@@ -10,15 +10,24 @@
 #include "ASTTraversal.h"
 #include "AnalysisInfo.h"
 #include "CallExprRewriter.h"
+#include "ExprAnalysis.h"
+#include "MapNames.h"
 #include "MigrationRuleManager.h"
+#include "TextModification.h"
+#include "Utility.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/OperationKinds.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Analysis/AnalysisDeclContext.h"
+#include "clang/Basic/AttrKinds.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Tooling/Tooling.h"
@@ -29,7 +38,10 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
 #include <iterator>
+#include <memory>
+#include <vector>
 
 using namespace clang;
 using namespace dpct;
@@ -1158,6 +1170,88 @@ void CubRule::processBlockLevelMemberCall(const CXXMemberCallExpr *BlockMC) {
     ExprAnalysis InEA(InData);
     if (FuncName == "Reduce" && NumArgs == 2) {
       OpRepl = getOpRepl(FuncArgs[1]);
+      const auto *CK = dyn_cast<ImplicitCastExpr>(FuncArgs[1]);
+      if (OpRepl.empty() && CK &&
+          CK->getCastKind() == CK_FunctionToPointerDecay) {
+        ExprAnalysis EA;
+        EA.analyze(CK);
+        OpRepl =
+            "[](auto&& x, auto&& y) { return " + EA.getReplacedString() +
+            "(std::forward<decltype(x)>(x), std::forward<decltype(y)>(y)); }";
+
+        NewFuncName = MapNames::getClNamespace() + "ext::oneapi::experimental::reduce_over_group";
+        Expr *Obj = BlockMC->getImplicitObjectArgument();
+        const VarDecl *TempStorage = nullptr;
+
+        auto FindTempStorageVarInCtor = [&](const Expr *E) -> const VarDecl * {
+          if (auto *Ctor = dyn_cast<CXXConstructExpr>(E)) {
+            if (auto *DRE = dyn_cast<DeclRefExpr>(Ctor->getArg(0))) {
+              if (auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+                if (VD->hasAttr<CUDASharedAttr>() && isCubVar(VD)) {
+                  return VD;
+                }
+              }
+            }
+          }
+          return nullptr;
+        };
+
+        if (const auto *MTE = dyn_cast<MaterializeTemporaryExpr>(Obj)) {
+          TempStorage =
+              FindTempStorageVarInCtor(MTE->getSubExpr()->IgnoreCasts());
+        } else if (const auto *DRE = dyn_cast<DeclRefExpr>(Obj)) {
+          if (const auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+            if (isCubCollectiveRecordType(VD->getType()) && VD->hasInit()) {
+              emplaceTransformation(new ReplaceVarDecl(VD, ""));
+              TempStorage = FindTempStorageVarInCtor(VD->getInit());
+            }
+          }
+        }
+
+        auto MemberCallObjType = Obj->getType().getCanonicalType();
+        MemberCallObjType->dump();
+        QualType ElementType;
+
+        if (auto *CD = dyn_cast<RecordType>(MemberCallObjType.getTypePtr())) {
+          auto *RD = CD->getAsRecordDecl();
+          if (auto *CTST = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
+            ElementType = CTST->getTemplateArgs()[0].getAsType();
+          }
+        }
+        
+        auto *FD = DpctGlobalInfo::findAncestor<FunctionDecl>(TempStorage);
+        if (!FD || !TempStorage || ElementType.isNull())
+          return;
+        if (auto FuncInfo = DeviceFunctionDecl::LinkRedecls(FD)) {
+          auto Loc = DpctGlobalInfo::getLocInfo(TempStorage);
+          ExprAnalysis EA;
+          EA.analyze(BlockMC);
+          auto TDSI = EA.getTemplateDependentStringInfo();
+          auto *CT =
+              new CtTypeInfo("std::byte", "std::byte", /*Rng*/ {{}},
+                             /*ArraySizeOriginExprs*/ {},
+                             /*TDSI*/ TDSI, /*HelperFeatureSet*/ {},
+                             /*PtrLv*/ 0, /*isRef*/ false, /*isTempl*/ false,
+                             /*TemplateDependentMacro*/ false,
+                             /*IsArray*/ false, /*ContainSizeofType*/ false,
+                             /*isConstantQualified*/ false, /*isCubTmp*/ true);
+          // 
+          auto VarInfo =
+              std::make_shared<MemVarInfo>(std::shared_ptr<CtTypeInfo>(CT),
+                                           Loc.second, Loc.first, TempStorage);
+          VarInfo->setDependOnLocalSize();
+          VarInfo->setCubTempStorageElementType(DpctGlobalInfo::getTypeName(ElementType));
+          FuncInfo->addVar(VarInfo);
+        }
+        std::string Span = MapNames::getClNamespace() + "span<std::byte, 1>" +
+                           "(" + TempStorage->getNameAsString() +
+                           ".get_multi_ptr<" + MapNames::getClNamespace() +
+                           "access::decorated::no>().get(), " +
+                           TempStorage->getNameAsString() + ".size())";
+        GroupOrWorkitem = MapNames::getClNamespace() +
+                          "ext::oneapi::experimental::group_with_scratchpad(" +
+                          GroupOrWorkitem + ", " + Span + ")";
+      }
     } else if (FuncName == "Sum" && NumArgs == 1) {
       OpRepl = getOpRepl(nullptr);
     } else {

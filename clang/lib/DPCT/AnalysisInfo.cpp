@@ -2755,19 +2755,8 @@ MemVarInfo::VarAttrKind MemVarInfo::getAddressAttr(const VarDecl *VD) {
     return getAddressAttr(VD->getAttrs());
   return Host;
 }
-MemVarInfo::MemVarInfo(unsigned Offset,
-                       const clang::tooling::UnifiedPath &FilePath,
-                       const VarDecl *Var)
-    : VarInfo(Offset, FilePath, Var,
-              !(DpctGlobalInfo::useGroupLocalMemory() &&
-                getAddressAttr(Var) == Shared &&
-                Var->getStorageClass() != SC_Extern) &&
-                  isLexicallyInLocalScope(Var)),
-      Attr(getAddressAttr(Var)),
-      Scope(isLexicallyInLocalScope(Var)
-                ? (Var->getStorageClass() == SC_Extern ? Extern : Local)
-                : Global),
-      PointerAsArray(false) {
+
+void MemVarInfo::init(const VarDecl *Var) {
   if (isTreatPointerAsArray()) {
     Attr = Device;
     getType()->adjustAsMemType();
@@ -2815,7 +2804,10 @@ MemVarInfo::MemVarInfo(unsigned Offset,
       }
     }
   }
-  if (getType()->getDimension() == 0 && !isTypeDeclaredLocal()) {
+
+  if (getType()->isCubTempStorageType()) {
+    AccMode = Value;
+  } else if (getType()->getDimension() == 0 && !isTypeDeclaredLocal()) {
     if (Attr == Constant)
       AccMode = Value;
     else
@@ -2828,6 +2820,39 @@ MemVarInfo::MemVarInfo(unsigned Offset,
 
   newConstVarInit(Var);
 }
+
+MemVarInfo::MemVarInfo(unsigned Offset,
+                       const clang::tooling::UnifiedPath &FilePath,
+                       const VarDecl *Var)
+    : VarInfo(Offset, FilePath, Var,
+              !(DpctGlobalInfo::useGroupLocalMemory() &&
+                getAddressAttr(Var) == Shared &&
+                Var->getStorageClass() != SC_Extern) &&
+                  isLexicallyInLocalScope(Var)),
+      Attr(getAddressAttr(Var)),
+      Scope(isLexicallyInLocalScope(Var)
+                ? (Var->getStorageClass() == SC_Extern ? Extern : Local)
+                : Global),
+      PointerAsArray(false) {
+  init(Var);
+}
+
+MemVarInfo::MemVarInfo(std::shared_ptr<CtTypeInfo> Type, unsigned Offset,
+                       const clang::tooling::UnifiedPath &FilePath,
+                       const VarDecl *Var)
+    : VarInfo(Type, Offset, FilePath, Var,
+              !(DpctGlobalInfo::useGroupLocalMemory() &&
+                getAddressAttr(Var) == Shared &&
+                Var->getStorageClass() != SC_Extern) &&
+                  isLexicallyInLocalScope(Var)),
+      Attr(getAddressAttr(Var)),
+      Scope(isLexicallyInLocalScope(Var)
+                ? (Var->getStorageClass() == SC_Extern ? Extern : Local)
+                : Global),
+      PointerAsArray(false) {
+  init(Var);
+}
+
 void MemVarInfo::newConstVarInit(const VarDecl *Var) {
   CharSourceRange SR(DpctGlobalInfo::getSourceManager().getExpansionRange(
       Var->getSourceRange()));
@@ -2994,7 +3019,11 @@ std::string MemVarInfo::getRangeDecl(const std::string &MemSize) {
 }
 ParameterStream &MemVarInfo::getFuncDecl(ParameterStream &PS) {
   if (AccMode == Value) {
-    PS << getAccessorDataType(true, true) << " ";
+    if (getType()->isCubTempStorageType())
+      PS <<getSyclAccessorType();
+    else
+      PS << getAccessorDataType(true, true);
+    PS << " ";    
   } else if (AccMode == Pointer) {
     PS << getAccessorDataType(true, true);
     if (!getType()->isPointer())
@@ -3028,6 +3057,16 @@ ParameterStream &MemVarInfo::getKernelArg(ParameterStream &PS) {
       PS << getAccessorName() << ".get_multi_ptr<" << MapNames::getClNamespace()
          << "access::decorated::no>().get()";
     } else {
+      /*
+      if (getType()->isCubTempStorageType()) {
+        PS << MapNames::getClNamespace() << "span<std::byte, 1>"
+           << "(" << getAccessorName() << ".get_multi_ptr<"
+           << MapNames::getClNamespace() << "access::decorated::no>().get(), "
+           << getAccessorName() << ".size())";
+      } else {
+        PS << getAccessorName();
+      }
+      */
       PS << getAccessorName();
     }
   } else {
@@ -3613,6 +3652,8 @@ void MemVarMap::merge(const MemVarMap &VarMap,
   merge(GlobalVarMap, VarMap.GlobalVarMap, TemplateArgs);
   merge(ExternVarMap, VarMap.ExternVarMap, TemplateArgs);
   dpct::merge(TextureMap, VarMap.TextureMap);
+  // if (!TemplateArgs.empty())
+  // CtTypeInfo->applyTemplateArguments(TemplateArgs);
 }
 int MemVarMap::calculateExtraArgsSize() const {
   int Size = 0;
@@ -3642,6 +3683,8 @@ MemVarMap::getArgumentsOrParameters(int PreParams, int PostParams,
     getSync<COD>(PS) << ", ";
   if (!ExternVarMap.empty())
     GetArgOrParam<MemVarInfo, COD>()(PS, ExternVarMap.begin()->second) << ", ";
+  // if (TempStorage)
+  //   GetArgOrParam<MemVarInfo, COD>()(PS, /*TempStorageInfo*/) << ", ";
   getArgumentsOrParametersFromMap<MemVarInfo, COD>(PS, GlobalVarMap);
   getArgumentsOrParametersFromMap<MemVarInfo, COD>(PS, LocalVarMap);
   getArgumentsOrParametersFromMap<TextureInfo, COD>(PS, TextureMap);
@@ -3861,6 +3904,10 @@ void MemVarMap::getArgumentsOrParametersForDecl(ParameterStream &PS,
         TPS, ExternVarMap.begin()->second);
     PS << TPS.Str;
   }
+
+  // if (TempStorage)
+  //   GetArgOrParam<MemVarInfo, MemVarMap::DeclParameter>()(
+  //       TPS, ExternVarMap.begin()->second);
 
   getArgumentsOrParametersFromMap<MemVarInfo, MemVarMap::DeclParameter>(
       PS, GlobalVarMap);
@@ -5694,8 +5741,17 @@ void KernelCallExpr::addAccessorDecl(std::shared_ptr<MemVarInfo> VI) {
       OuterStmts.ExternList.emplace_back(VI->getExternGlobalVarDecl());
     }
   }
-  VI->appendAccessorOrPointerDecl(ExecutionConfig.ExternMemSize,
-                                  EmitSizeofWarning, SubmitStmts.AccessorList,
+
+  std::string MemSize;
+  if (VI->isDependOnLocalSize()) {
+    MemSize = ExecutionConfig.LocalSize + ".size()";
+    if (!VI->getCubTempStorageElementType().empty())
+      MemSize += " * sizeof(" + VI->getCubTempStorageElementType() + ")";
+  } else
+    MemSize = ExecutionConfig.ExternMemSize;
+
+  VI->appendAccessorOrPointerDecl(MemSize, EmitSizeofWarning,
+                                  SubmitStmts.AccessorList,
                                   SubmitStmts.PtrList);
   if (VI->isTypeDeclaredLocal()) {
     if (DiagnosticsUtils::report(getFilePath(), getBegin(),
